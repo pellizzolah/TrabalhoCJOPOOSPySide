@@ -1,0 +1,2 @@
+# TrabalhoCJOPOOSPyQt6
+Trabalho
