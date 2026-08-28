@@ -24,3 +24,4 @@ Como executar
 
 1. Instale as dependências:
    pip install pyside6 requests
+   rode o programa e seja feliz
