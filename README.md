@@ -1,4 +1,4 @@
-# TrabalhoCJOPOOSPyQt6
+# TrabalhoCJOPOOSPySide6
 
 Aplicação desktop para cadastro de pessoas com validação, integração com API ViaCEP e banco de dados SQLite.
 
