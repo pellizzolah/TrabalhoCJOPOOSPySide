@@ -9,19 +9,66 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QPushButton, QTableWidget, QTableWidgetItem,
                                QComboBox, QHeaderView, QMessageBox, QGroupBox,
                                QFileDialog, QStatusBar, QStyle)
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 
-from reportlab.lib import colors
+DB_PATH = "cadastro.db"
+EMPRESA = "PellizzolaTechs"
+APP = "CadastroApp"
+POR_PAGINA = 50
+
+ESTADOS = ["", "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT",
+           "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO",
+           "RR", "SC", "SP", "SE", "TO"]
+
+FILTROS = {"Todos": "nome", "Nome": "nome", "CPF": "cpf",
+           "E-mail": "email", "Cidade": "cidade"}
+
+ATALHOS = {
+    "Ctrl+S": "salvar_dados", "Ctrl+L": "limpar_campos",
+    "Ctrl+P": "exportar_pdf", "Delete": "excluir_dados",
+    "F5": "carregar_dados", "Ctrl+Shift+N": "nova_pagina",
+    "Alt+Left": "pagina_anterior", "Alt+Right": "proxima_pagina",
+}
+
+CAMPOS_FORM = [
+    (0, 0, 4, "Nome: *",     "nome",        {"placeholder": "Nome completo"}),
+    (1, 0, 1, "CPF: *",      "cpf",         {"mask": "999.999.999-99;_"}),
+    (1, 2, 1, "E-mail:",     "email",       {"placeholder": "exemplo@email.com"}),
+    (2, 0, 1, "Celular:",    "celular",     {"mask": "(99) 99999-9999;_"}),
+    (2, 2, 1, "CEP:",        "cep",         {"mask": "99999-999;_"}),
+    (3, 0, 4, "Logradouro:", "logradouro",  {}),
+    (4, 0, 1, "Nº:",         "numero",      {}),
+    (4, 2, 1, "Complemento:","complemento", {}),
+    (5, 0, 4, "Bairro:",     "bairro",      {}),
+    (6, 0, 1, "Cidade:",     "cidade",      {}),
+]
+
+CAMPOS_DB = ["nome", "cpf", "email", "celular", "cep", "logradouro",
+             "numero", "complemento", "bairro", "cidade"]
+
+from reportlab.lib import colors as rl_colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
-# ==========================================
-# CONFIGURAÇÕES GLOBAIS
-# ==========================================
-DB_PATH = "cadastro.db"
+PDF_TABLE_STYLE = TableStyle([
+    ('BACKGROUND', (0, 0), (-1, 0), rl_colors.HexColor("#00bcd4")),
+    ('TEXTCOLOR', (0, 0), (-1, 0), rl_colors.white),
+    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+    ('FONTSIZE', (0, 0), (-1, 0), 10),
+    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+    ('FONTSIZE', (0, 1), (-1, -1), 8),
+    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#f0f0f0")]),
+    ('GRID', (0, 0), (-1, -1), 0.5, rl_colors.grey),
+    ('LEFTPADDING', (0, 0), (-1, -1), 4),
+    ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ('TOPPADDING', (0, 0), (-1, -1), 4),
+    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+])
 
 CORES = {
     "dark": {
@@ -52,67 +99,73 @@ CORES = {
     },
 }
 
-# ==========================================
-# BANCO DE DADOS
-# ==========================================
+QSS_TEMPLATE = """
+QMainWindow, QWidget {{ background-color: {bg}; color: {fg}; font-family: 'Segoe UI', Arial; font-size: 14px; }}
+QGroupBox {{ border: 1px solid {input_border}; border-radius: 8px; margin-top: 15px; padding-top: 20px; font-weight: bold; color: {accent}; background-color: {group_bg}; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 15px; padding: 0 5px 0 5px; }}
+QLineEdit, QComboBox {{ background-color: {input_bg}; border: 1px solid {input_border}; border-radius: 4px; padding: 6px; color: {fg}; }}
+QLineEdit:focus, QComboBox:focus {{ border: 1px solid {focus}; }}
+QLineEdit[valido="true"] {{ border: 1px solid {btn_salvar}; }}
+QLineEdit[invalido="true"] {{ border: 1px solid {btn_excluir}; }}
+QPushButton {{ background-color: {btn_bg}; border: 1px solid {btn_border}; border-radius: 4px; padding: 8px 15px; font-weight: bold; color: {fg}; }}
+QPushButton:hover {{ background-color: {btn_hover}; }}
+QPushButton#btnSalvar {{ background-color: {btn_salvar}; border: none; color: white; }}
+QPushButton#btnSalvar:hover {{ background-color: {btn_salvar_hover}; }}
+QPushButton#btnExcluir {{ background-color: {btn_excluir}; border: none; color: white; }}
+QPushButton#btnExcluir:hover {{ background-color: {btn_excluir_hover}; }}
+QPushButton#btnPdf {{ background-color: {btn_pdf}; border: none; color: white; }}
+QPushButton#btnPdf:hover {{ background-color: {btn_pdf_hover}; }}
+QPushButton#btnEditarTabela {{ background-color: {btn_editar}; border: none; padding: 4px; color: white; }}
+QPushButton#btnPagina {{ background-color: {btn_bg}; border: 1px solid {btn_border}; padding: 4px 10px; }}
+QTableWidget {{ background-color: {table_bg}; border: 1px solid {grid}; gridline-color: {grid}; alternate-background-color: {table_alt}; }}
+QTableWidget::item {{ padding: 5px; }}
+QTableWidget::item:selected {{ background-color: {focus}; color: {row_sel_fg}; }}
+QHeaderView::section {{ background-color: {header_bg}; padding: 6px; border: none; border-right: 1px solid {grid}; border-bottom: 1px solid {grid}; font-weight: bold; color: {fg}; }}
+QStatusBar {{ background-color: {status_bg}; color: {status_fg}; }}
+QMessageBox {{ background-color: {msg_bg}; }}
+"""
+
+
 def db_execute(query, params=(), fetch=None):
-    """Executa uma query no banco. fetch: 'one', 'all' ou None (commit)."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(query, params)
-    resultado = None
-    if fetch == "one":
-        resultado = cursor.fetchone()
-    elif fetch == "all":
-        resultado = cursor.fetchall()
-    else:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        if fetch == "one": return cur.fetchone()
+        if fetch == "all": return cur.fetchall()
         conn.commit()
-    conn.close()
-    return resultado
+
 
 def init_db():
-    db_execute('''
-        CREATE TABLE IF NOT EXISTS pessoas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            cpf TEXT UNIQUE,
-            email TEXT,
-            celular TEXT,
-            cep TEXT,
-            logradouro TEXT,
-            numero TEXT,
-            complemento TEXT,
-            bairro TEXT,
-            cidade TEXT,
-            estado TEXT,
-            data_cadastro TEXT
-        )
-    ''')
+    db_execute('''CREATE TABLE IF NOT EXISTS pessoas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL, cpf TEXT UNIQUE, email TEXT, celular TEXT,
+        cep TEXT, logradouro TEXT, numero TEXT, complemento TEXT,
+        bairro TEXT, cidade TEXT, estado TEXT, data_cadastro TEXT)''')
 
-# ==========================================
-# FUNÇÕES UTILITÁRIAS
-# ==========================================
+
 def formatar_cpf(cpf):
     if not cpf: return ""
-    cpf = str(cpf).zfill(11)
+    cpf = str(cpf)
     return f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}"
+
 
 def formatar_celular(celular):
     if not celular: return ""
-    celular = str(celular).zfill(11)
+    celular = str(celular)
     return f"({celular[:2]}) {celular[2:7]}-{celular[7:]}"
+
 
 def formatar_cep(cep):
     if not cep: return ""
-    cep = str(cep).zfill(8)
+    cep = str(cep)
     return f"{cep[:5]}-{cep[5:]}"
+
 
 def limpar_formatacao(texto):
     return re.sub(r'\D', '', texto)
 
+
 def validar_cpf(cpf):
-    """Valida o CPF com o algoritmo oficial dos dígitos verificadores."""
-    cpf = limpar_formatacao(cpf)
     if len(cpf) != 11 or cpf == cpf[0] * 11:
         return False
     for i in (9, 10):
@@ -122,51 +175,32 @@ def validar_cpf(cpf):
         if resto != int(cpf[i]): return False
     return True
 
-def montar_qss(c):
-    """Gera o QSS a partir de um dicionário de cores."""
-    return f"""
-        QMainWindow, QWidget {{ background-color: {c['bg']}; color: {c['fg']}; font-family: 'Segoe UI', Arial; font-size: 14px; }}
-        QGroupBox {{ border: 1px solid {c['input_border']}; border-radius: 8px; margin-top: 15px; padding-top: 20px; font-weight: bold; color: {c['accent']}; background-color: {c['group_bg']}; }}
-        QGroupBox::title {{ subcontrol-origin: margin; left: 15px; padding: 0 5px 0 5px; }}
-        QLineEdit, QComboBox {{ background-color: {c['input_bg']}; border: 1px solid {c['input_border']}; border-radius: 4px; padding: 6px; color: {c['fg']}; }}
-        QLineEdit:focus, QComboBox:focus {{ border: 1px solid {c['focus']}; }}
-        QPushButton {{ background-color: {c['btn_bg']}; border: 1px solid {c['btn_border']}; border-radius: 4px; padding: 8px 15px; font-weight: bold; color: {c['fg']}; }}
-        QPushButton:hover {{ background-color: {c['btn_hover']}; }}
-        QPushButton#btnSalvar {{ background-color: {c['btn_salvar']}; border: none; color: white; }}
-        QPushButton#btnSalvar:hover {{ background-color: {c['btn_salvar_hover']}; }}
-        QPushButton#btnExcluir {{ background-color: {c['btn_excluir']}; border: none; color: white; }}
-        QPushButton#btnExcluir:hover {{ background-color: {c['btn_excluir_hover']}; }}
-        QPushButton#btnPdf {{ background-color: {c['btn_pdf']}; border: none; color: white; }}
-        QPushButton#btnPdf:hover {{ background-color: {c['btn_pdf_hover']}; }}
-        QPushButton#btnEditarTabela {{ background-color: {c['btn_editar']}; border: none; padding: 4px; color: white; }}
-        QTableWidget {{ background-color: {c['table_bg']}; border: 1px solid {c['grid']}; gridline-color: {c['grid']}; alternate-background-color: {c['table_alt']}; }}
-        QTableWidget::item {{ padding: 5px; }}
-        QTableWidget::item:selected {{ background-color: {c['focus']}; color: {c['row_sel_fg']}; }}
-        QHeaderView::section {{ background-color: {c['header_bg']}; padding: 6px; border: none; border-right: 1px solid {c['grid']}; border-bottom: 1px solid {c['grid']}; font-weight: bold; color: {c['fg']}; }}
-        QStatusBar {{ background-color: {c['status_bg']}; color: {c['status_fg']}; }}
-        QMessageBox {{ background-color: {c['msg_bg']}; }}
-    """
 
-# ==========================================
-# JANELA PRINCIPAL
-# ==========================================
+def validar_email(email):
+    return bool(re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Sistema de Cadastro de Clientes")
         self.setMinimumSize(1150, 800)
 
-        self.settings = QSettings("MinhaEmpresa", "CadastroApp")
+        self.settings = QSettings(EMPRESA, APP)
         self.tema_atual = self.settings.value("tema", "dark")
         self.id_editando = None
+        self.pagina_atual = 0
+        self.total_registros = 0
 
         geometria = self.settings.value("geometria")
-        if geometria:
-            self.restoreGeometry(geometria)
+        if geometria: self.restoreGeometry(geometria)
 
         self.setup_ui()
         self.configurar_atalhos()
+        self.configurar_validacao_tempo_real()
+        self.configurar_auto_save()
         self.aplicar_estilos()
+        self.recuperar_rascunho()
         self.carregar_dados()
 
     def closeEvent(self, event):
@@ -174,20 +208,47 @@ class MainWindow(QMainWindow):
         self.settings.setValue("tema", self.tema_atual)
         super().closeEvent(event)
 
-    def configurar_atalhos(self):
-        atalhos = {
-            "Ctrl+S": self.salvar_dados,
-            "Ctrl+L": self.limpar_campos,
-            "Ctrl+P": self.exportar_pdf,
-            "Delete": self.excluir_dados,
-            "F5": self.carregar_dados,
-        }
-        for tecla, funcao in atalhos.items():
-            QShortcut(QKeySequence(tecla), self, funcao)
+    # ---------- FACTORIES ----------
+    def _input(self, placeholder=None, mask=None):
+        w = QLineEdit()
+        if mask: w.setInputMask(mask)
+        if placeholder: w.setPlaceholderText(placeholder)
+        return w
 
-    # ==========================================
-    # CONSTRUÇÃO DA INTERFACE
-    # ==========================================
+    def _btn(self, texto, icone=None, objeto=None, callback=None, width=None):
+        b = QPushButton(texto)
+        if icone: b.setIcon(self.style().standardIcon(icone))
+        if objeto: b.setObjectName(objeto)
+        if callback: b.clicked.connect(callback)
+        if width: b.setFixedWidth(width)
+        return b
+
+    def _msg(self, titulo, html, icone=QMessageBox.Information):
+        m = QMessageBox(self)
+        m.setWindowTitle(titulo)
+        m.setIcon(icone)
+        m.setTextFormat(Qt.RichText)
+        m.setText(html)
+        m.exec()
+
+    # ---------- SETUP ----------
+    def configurar_atalhos(self):
+        for tecla, metodo in ATALHOS.items():
+            QShortcut(QKeySequence(tecla), self, getattr(self, metodo))
+
+    def configurar_validacao_tempo_real(self):
+        self.input_cpf.textChanged.connect(self.validar_cpf_tempo_real)
+        self.input_email.textChanged.connect(self.validar_email_tempo_real)
+
+    def configurar_auto_save(self):
+        self.timer_rascunho = QTimer(self)
+        self.timer_rascunho.setSingleShot(True)
+        self.timer_rascunho.setInterval(1500)
+        self.timer_rascunho.timeout.connect(self.salvar_rascunho)
+        for campo in CAMPOS_DB:
+            getattr(self, f"input_{campo}").textChanged.connect(
+                lambda: self.timer_rascunho.start())
+
     def setup_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -195,84 +256,50 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
-        # Topo
         hbox_topo = QHBoxLayout()
         titulo = QLabel("Gestão de Clientes")
         titulo.setStyleSheet("font-size: 24px; font-weight: bold;")
         hbox_topo.addWidget(titulo)
         hbox_topo.addStretch()
 
-        self.btn_tema = QPushButton("☀️ Modo Claro" if self.tema_atual == "dark" else "🌙 Modo Escuro")
-        self.btn_tema.setFixedWidth(140)
-        self.btn_tema.clicked.connect(self.alternar_tema)
+        self.btn_tema = self._btn(
+            "☀️ Modo Claro" if self.tema_atual == "dark" else "🌙 Modo Escuro",
+            callback=self.alternar_tema, width=140)
         hbox_topo.addWidget(self.btn_tema)
         layout.addLayout(hbox_topo)
 
-        # Formulário
-        group = QGroupBox("Dados do Cliente")
+        self.group_form = QGroupBox("Dados do Cliente")
         grid = QGridLayout()
         grid.setSpacing(10)
 
-        self.input_nome = QLineEdit(); self.input_nome.setPlaceholderText("Nome completo")
-        self.input_cpf = QLineEdit(); self.input_cpf.setInputMask("999.999.999-99;_")
-        self.input_email = QLineEdit(); self.input_email.setPlaceholderText("exemplo@email.com")
-        self.input_celular = QLineEdit(); self.input_celular.setInputMask("(99) 99999-9999;_")
-        self.input_cep = QLineEdit(); self.input_cep.setInputMask("99999-999;_")
-        self.input_logradouro = QLineEdit()
-        self.input_numero = QLineEdit()
-        self.input_complemento = QLineEdit()
-        self.input_bairro = QLineEdit()
-        self.input_cidade = QLineEdit()
+        for row, col, span, label, key, opts in CAMPOS_FORM:
+            widget = self._input(**opts)
+            setattr(self, f"input_{key}", widget)
+            grid.addWidget(QLabel(label), row, col)
+            grid.addWidget(widget, row, col + 1, 1, span)
+
+        self.btn_buscar_cep = self._btn(" Buscar CEP", QStyle.SP_BrowserReload,
+                                        callback=self.buscar_cep)
+        hbox_cep = QHBoxLayout()
+        hbox_cep.addWidget(self.input_cep)
+        hbox_cep.addWidget(self.btn_buscar_cep)
+        grid.addLayout(hbox_cep, 2, 3)
 
         self.combo_estado = QComboBox()
-        self.combo_estado.addItems(["", "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO",
-                                    "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI",
-                                    "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"])
+        self.combo_estado.addItems(ESTADOS)
+        grid.addWidget(QLabel("Estado:"), 6, 2)
+        grid.addWidget(self.combo_estado, 6, 3)
 
-        self.btn_buscar_cep = QPushButton(" Buscar CEP")
-        self.btn_buscar_cep.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.btn_buscar_cep.clicked.connect(self.buscar_cep)
+        self.group_form.setLayout(grid)
+        layout.addWidget(self.group_form)
 
-        grid.addWidget(QLabel("Nome: *"), 0, 0); grid.addWidget(self.input_nome, 0, 1, 1, 3)
-        grid.addWidget(QLabel("CPF: *"), 1, 0); grid.addWidget(self.input_cpf, 1, 1)
-        grid.addWidget(QLabel("E-mail:"), 1, 2); grid.addWidget(self.input_email, 1, 3)
-        grid.addWidget(QLabel("Celular:"), 2, 0); grid.addWidget(self.input_celular, 2, 1)
-        grid.addWidget(QLabel("CEP:"), 2, 2)
-        hbox_cep = QHBoxLayout()
-        hbox_cep.addWidget(self.input_cep); hbox_cep.addWidget(self.btn_buscar_cep)
-        grid.addLayout(hbox_cep, 2, 3)
-        grid.addWidget(QLabel("Logradouro:"), 3, 0); grid.addWidget(self.input_logradouro, 3, 1, 1, 3)
-        grid.addWidget(QLabel("Nº:"), 4, 0); grid.addWidget(self.input_numero, 4, 1)
-        grid.addWidget(QLabel("Complemento:"), 4, 2); grid.addWidget(self.input_complemento, 4, 3)
-        grid.addWidget(QLabel("Bairro:"), 5, 0); grid.addWidget(self.input_bairro, 5, 1, 1, 3)
-        grid.addWidget(QLabel("Cidade:"), 6, 0); grid.addWidget(self.input_cidade, 6, 1)
-        grid.addWidget(QLabel("Estado:"), 6, 2); grid.addWidget(self.combo_estado, 6, 3)
+        self.campos_texto = [getattr(self, f"input_{k}") for k in CAMPOS_DB]
 
-        group.setLayout(grid)
-        layout.addWidget(group)
-
-        # Campos que são limpos com frequência (facilita manutenção)
-        self.campos_texto = [
-            self.input_nome, self.input_cpf, self.input_email, self.input_celular,
-            self.input_cep, self.input_logradouro, self.input_numero,
-            self.input_complemento, self.input_bairro, self.input_cidade,
-        ]
-
-        # Botões CRUD
         hbox_btn = QHBoxLayout()
-        self.btn_salvar = QPushButton(" Salvar"); self.btn_salvar.setObjectName("btnSalvar")
-        self.btn_salvar.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
-        self.btn_limpar = QPushButton(" Limpar")
-        self.btn_limpar.setIcon(self.style().standardIcon(QStyle.SP_DialogResetButton))
-        self.btn_excluir = QPushButton(" Excluir"); self.btn_excluir.setObjectName("btnExcluir")
-        self.btn_excluir.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
-        self.btn_pdf = QPushButton(" Exportar PDF"); self.btn_pdf.setObjectName("btnPdf")
-        self.btn_pdf.setIcon(self.style().standardIcon(QStyle.SP_FileIcon))
-
-        self.btn_salvar.clicked.connect(self.salvar_dados)
-        self.btn_limpar.clicked.connect(self.limpar_campos)
-        self.btn_excluir.clicked.connect(self.excluir_dados)
-        self.btn_pdf.clicked.connect(self.exportar_pdf)
+        self.btn_salvar = self._btn(" Salvar", QStyle.SP_DialogSaveButton, "btnSalvar", self.salvar_dados)
+        self.btn_limpar = self._btn(" Limpar", QStyle.SP_DialogResetButton, callback=self.limpar_campos)
+        self.btn_excluir = self._btn(" Excluir", QStyle.SP_TrashIcon, "btnExcluir", self.excluir_dados)
+        self.btn_pdf = self._btn(" Exportar PDF", QStyle.SP_FileIcon, "btnPdf", self.exportar_pdf)
 
         for b in (self.btn_salvar, self.btn_limpar, self.btn_excluir):
             hbox_btn.addWidget(b)
@@ -280,27 +307,30 @@ class MainWindow(QMainWindow):
         hbox_btn.addWidget(self.btn_pdf)
         layout.addLayout(hbox_btn)
 
-        # Tabela e filtro
         group_lista = QGroupBox("Lista de Clientes")
         layout_lista = QVBoxLayout()
 
         hbox_pesq = QHBoxLayout()
         hbox_pesq.addWidget(QLabel("Filtrar por:"))
         self.combo_filtro = QComboBox()
-        self.combo_filtro.addItems(["Todos", "Nome", "CPF", "E-mail", "Cidade"])
+        self.combo_filtro.addItems(list(FILTROS.keys()))
         self.combo_filtro.setFixedWidth(110)
-        self.input_pesquisa = QLineEdit()
-        self.input_pesquisa.setPlaceholderText("🔍 Digite uma palavra para filtrar os dados da tabela...")
-        self.input_pesquisa.textChanged.connect(self.filtrar_tabela)
+        self.combo_filtro.currentTextChanged.connect(self.resetar_e_carregar)
+
+        self.input_pesquisa = self._input(
+            placeholder="🔍 Digite uma palavra para filtrar os dados da tabela...")
+        self.input_pesquisa.textChanged.connect(self.resetar_e_carregar)
+
         hbox_pesq.addWidget(self.combo_filtro)
         hbox_pesq.addWidget(self.input_pesquisa)
         layout_lista.addLayout(hbox_pesq)
 
         self.tabela = QTableWidget()
         self.tabela.setColumnCount(9)
-        self.tabela.setHorizontalHeaderLabels(["ID", "Data", "Nome", "CPF", "E-mail", "Celular", "Cidade", "Estado", "Ações"])
+        self.tabela.setHorizontalHeaderLabels(
+            ["ID", "Data", "Nome", "CPF", "E-mail", "Celular", "Cidade", "Estado", "Ações"])
         self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        for col, largura in [(0, 50), (1, 110), (8, 90)]:
+        for col, largura in ((0, 50), (1, 110), (8, 90)):
             self.tabela.setColumnWidth(col, largura)
         self.tabela.setAlternatingRowColors(True)
         self.tabela.setSelectionBehavior(QTableWidget.SelectRows)
@@ -308,300 +338,300 @@ class MainWindow(QMainWindow):
         self.tabela.cellDoubleClicked.connect(self.on_double_click)
         layout_lista.addWidget(self.tabela)
 
+        hbox_pag = QHBoxLayout()
+        hbox_pag.addStretch()
+        self.btn_ant = self._btn("◀ Anterior", objeto="btnPagina",
+                                 callback=self.pagina_anterior, width=110)
+        self.lbl_pagina = QLabel("Página 1 / 1")
+        self.lbl_pagina.setAlignment(Qt.AlignCenter)
+        self.lbl_pagina.setFixedWidth(150)
+        self.btn_prox = self._btn("Próxima ▶", objeto="btnPagina",
+                                  callback=self.proxima_pagina, width=110)
+
+        hbox_pag.addWidget(self.btn_ant)
+        hbox_pag.addWidget(self.lbl_pagina)
+        hbox_pag.addWidget(self.btn_prox)
+        hbox_pag.addStretch()
+        layout_lista.addLayout(hbox_pag)
+
         group_lista.setLayout(layout_lista)
         layout.addWidget(group_lista)
 
-        # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.lbl_contador = QLabel("Total: 0 clientes")
         self.status_bar.addPermanentWidget(self.lbl_contador)
-        self.status_bar.showMessage("Pronto. Atalhos: Ctrl+S Salvar | Ctrl+P Exportar PDF | F5 Atualizar")
+        self.status_bar.showMessage("Pronto. Atalhos: Ctrl+S Salvar | Ctrl+P PDF | F5 Atualizar")
 
-    # ==========================================
-    # CRUD
-    # ==========================================
-    def validar_campos(self):
-        for campo in (self.input_nome, self.input_cpf, self.input_email):
-            campo.setStyleSheet("")
+    # ---------- VALIDAÇÃO EM TEMPO REAL ----------
+    def _set_estado(self, campo, valido=None):
+        if valido is None:
+            campo.setProperty("valido", False)
+            campo.setProperty("invalido", False)
+        else:
+            campo.setProperty("valido", valido)
+            campo.setProperty("invalido", not valido)
+        campo.style().unpolish(campo)
+        campo.style().polish(campo)
 
-        nome = self.input_nome.text().strip()
+    def validar_cpf_tempo_real(self):
         cpf = limpar_formatacao(self.input_cpf.text())
+        if not cpf or len(cpf) < 11:
+            self._set_estado(self.input_cpf, None)
+        else:
+            self._set_estado(self.input_cpf, validar_cpf(cpf))
+
+    def validar_email_tempo_real(self):
         email = self.input_email.text().strip()
+        if not email:
+            self._set_estado(self.input_email, None)
+        else:
+            self._set_estado(self.input_email, validar_email(email))
 
-        if not nome:
-            self.input_nome.setStyleSheet("border: 1px solid red;")
-            self.mostrar_erro("O campo Nome é obrigatório.")
-            return False
+    # ---------- AUTO-SAVE DE RASCUNHO ----------
+    def salvar_rascunho(self):
+        if self.id_editando: return
+        valores = [c.text() for c in self.campos_texto] + [self.combo_estado.currentText()]
+        if not any(v.strip() for v in valores): return
+        self.settings.setValue("rascunho", valores)
 
-        if not cpf or len(cpf) < 11 or not validar_cpf(cpf):
-            self.input_cpf.setStyleSheet("border: 1px solid red;")
-            self.mostrar_erro("CPF inválido ou incompleto.")
-            return False
+    def recuperar_rascunho(self):
+        rascunho = self.settings.value("rascunho")
+        if not rascunho: return
+        try:
+            for campo, valor in zip(self.campos_texto, rascunho[:10]):
+                campo.setText(valor)
+            self.combo_estado.setCurrentText(rascunho[10])
+            self.status_bar.showMessage("Rascunho recuperado.", 4000)
+        except Exception:
+            pass
 
-        if email and not re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
-            self.input_email.setStyleSheet("border: 1px solid red;")
-            self.mostrar_erro("O e-mail informado é inválido.")
-            return False
+    def limpar_rascunho(self):
+        self.settings.remove("rascunho")
 
+    # ---------- CRUD ----------
+    def _dados_formulario(self):
+        return {
+            "nome": self.input_nome.text().strip(),
+            "cpf": limpar_formatacao(self.input_cpf.text()),
+            "email": self.input_email.text().strip(),
+            "celular": limpar_formatacao(self.input_celular.text()),
+            "cep": limpar_formatacao(self.input_cep.text()),
+            "logradouro": self.input_logradouro.text().strip(),
+            "numero": self.input_numero.text().strip(),
+            "complemento": self.input_complemento.text().strip(),
+            "bairro": self.input_bairro.text().strip(),
+            "cidade": self.input_cidade.text().strip(),
+            "estado": self.combo_estado.currentText(),
+        }
+
+    def validar_campos(self, dados):
+        if not dados["nome"]:
+            return self.mostrar_erro("O campo Nome é obrigatório.")
+        if len(dados["cpf"]) != 11 or not validar_cpf(dados["cpf"]):
+            return self.mostrar_erro("CPF inválido ou incompleto.")
+        if dados["email"] and not validar_email(dados["email"]):
+            return self.mostrar_erro("O e-mail informado é inválido.")
         return True
 
     def verificar_duplicados(self, cpf, email):
-        if self.id_editando:
-            row = db_execute("SELECT id FROM pessoas WHERE cpf=? AND id!=?", (cpf, self.id_editando), "one")
-        else:
-            row = db_execute("SELECT id FROM pessoas WHERE cpf=?", (cpf,), "one")
-        if row:
-            return "CPF já cadastrado no sistema."
-
-        if email:
+        def existe(campo, valor):
             if self.id_editando:
-                row = db_execute("SELECT id FROM pessoas WHERE email=? AND id!=?", (email, self.id_editando), "one")
-            else:
-                row = db_execute("SELECT id FROM pessoas WHERE email=?", (email,), "one")
-            if row:
-                return "E-mail já cadastrado no sistema."
+                return db_execute(f"SELECT 1 FROM pessoas WHERE {campo}=? AND id!=?",
+                                  (valor, self.id_editando), "one")
+            return db_execute(f"SELECT 1 FROM pessoas WHERE {campo}=?", (valor,), "one")
+
+        if existe("cpf", cpf): return "CPF já cadastrado no sistema."
+        if email and existe("email", email): return "E-mail já cadastrado no sistema."
         return None
 
     def salvar_dados(self):
-        """CREATE e UPDATE."""
-        if not self.validar_campos():
-            return
+        dados = self._dados_formulario()
 
-        cpf = limpar_formatacao(self.input_cpf.text())
-        email = self.input_email.text().strip()
+        if not self.validar_campos(dados): return
 
-        erro = self.verificar_duplicados(cpf, email)
-        if erro:
-            self.mostrar_erro(erro)
-            return
+        erro = self.verificar_duplicados(dados["cpf"], dados["email"])
+        if erro: return self.mostrar_erro(erro)
 
-        # Guarda informações antes de limpar os campos
-        nome_cliente = self.input_nome.text().strip()
-        modo_edicao = self.id_editando is not None
+        editando = self.id_editando is not None
 
-        dados = (
-            nome_cliente, cpf, email,
-            limpar_formatacao(self.input_celular.text()),
-            limpar_formatacao(self.input_cep.text()),
-            self.input_logradouro.text().strip(), self.input_numero.text().strip(),
-            self.input_complemento.text().strip(), self.input_bairro.text().strip(),
-            self.input_cidade.text().strip(), self.combo_estado.currentText()
+        valores = (
+            dados["nome"], dados["cpf"], dados["email"], dados["celular"],
+            dados["cep"], dados["logradouro"], dados["numero"],
+            dados["complemento"], dados["bairro"], dados["cidade"], dados["estado"]
         )
 
+        if not editando:
+            sql = '''INSERT INTO pessoas
+                (nome, cpf, email, celular, cep, logradouro, numero, complemento,
+                 bairro, cidade, estado, data_cadastro)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
+            params = valores + (datetime.now().strftime("%d/%m/%Y %H:%M"),)
+            msg = "Cliente cadastrado com sucesso!"
+            rodape = "O novo registro já está disponível na lista abaixo."
+        else:
+            sql = '''UPDATE pessoas SET nome=?, cpf=?, email=?, celular=?, cep=?,
+                logradouro=?, numero=?, complemento=?, bairro=?, cidade=?, estado=?
+                WHERE id=?'''
+            params = valores + (self.id_editando,)
+            msg = "Cadastro atualizado com sucesso!"
+            rodape = "As alterações foram salvas no banco de dados."
+
         try:
-            if not modo_edicao:
-                data_atual = datetime.now().strftime("%d/%m/%Y %H:%M")
-                db_execute('''
-                    INSERT INTO pessoas
-                    (nome, cpf, email, celular, cep, logradouro, numero, complemento, bairro, cidade, estado, data_cadastro)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', dados + (data_atual,))
-                self.status_bar.showMessage("Cliente cadastrado com sucesso!", 5000)
-            else:
-                db_execute('''
-                    UPDATE pessoas SET nome=?, cpf=?, email=?, celular=?, cep=?, logradouro=?,
-                    numero=?, complemento=?, bairro=?, cidade=?, estado=? WHERE id=?
-                ''', dados + (self.id_editando,))
-                self.status_bar.showMessage("Cadastro atualizado com sucesso!", 5000)
-
-            # Mensagem de sucesso personalizada
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Sucesso")
-            msg.setIcon(QMessageBox.Information)
-            msg.setTextFormat(Qt.RichText)
-            if not modo_edicao:
-                msg.setText(
-                    f"<h3>✅ Cliente cadastrado com sucesso!</h3>"
-                    f"<p><b>Nome:</b> {nome_cliente}</p>"
-                    f"<p><b>CPF:</b> {formatar_cpf(cpf)}</p>"
-                    f"<p>O novo registro já está disponível na lista abaixo.</p>"
-                )
-            else:
-                msg.setText(
-                    f"<h3>✅ Cadastro atualizado com sucesso!</h3>"
-                    f"<p><b>Nome:</b> {nome_cliente}</p>"
-                    f"<p><b>CPF:</b> {formatar_cpf(cpf)}</p>"
-                    f"<p>As alterações foram salvas no banco de dados.</p>"
-                )
-            msg.exec()
-
+            db_execute(sql, params)
+            self.status_bar.showMessage(msg, 5000)
+            self._msg("Sucesso",
+                      f"<h3>✅ {msg}</h3>"
+                      f"<p><b>Nome:</b> {dados['nome']}</p>"
+                      f"<p><b>CPF:</b> {formatar_cpf(dados['cpf'])}</p>"
+                      f"<p>{rodape}</p>")
             self.limpar_campos()
             self.carregar_dados()
         except sqlite3.Error as e:
             self.mostrar_erro(f"Erro no banco de dados: {e}")
 
     def carregar_dados(self):
-        """READ - lista todos os registros.
-        
-        A query SELECT usa a MESMA ordem dos cabeçalhos da tabela visual:
-        [0] ID, [1] Data, [2] Nome, [3] CPF, [4] E-mail, [5] Celular, [6] Cidade, [7] Estado
-        """
         self.tabela.setSortingEnabled(False)
         self.tabela.setRowCount(0)
 
-        resultados = db_execute('''
+        filtro = self.combo_filtro.currentText()
+        termo = self.input_pesquisa.text().strip()
+        coluna = FILTROS.get(filtro, "nome")
+
+        if filtro == "Todos" and termo:
+            where = "WHERE nome LIKE ? OR cpf LIKE ? OR email LIKE ? OR cidade LIKE ?"
+            like = f"%{termo}%"
+            params_where = (like, like, like, like)
+        elif termo:
+            where = f"WHERE {coluna} LIKE ?"
+            params_where = (f"%{termo}%",)
+        else:
+            where = ""
+            params_where = ()
+
+        self.total_registros = db_execute(
+            f"SELECT COUNT(*) FROM pessoas {where}", params_where, "one")[0]
+
+        offset = self.pagina_atual * POR_PAGINA
+        resultados = db_execute(f'''
             SELECT id, data_cadastro, nome, cpf, email, celular, cidade, estado
-            FROM pessoas
-            ORDER BY id DESC
-        ''', fetch="all")
+            FROM pessoas {where} ORDER BY id DESC LIMIT ? OFFSET ?''',
+            params_where + (POR_PAGINA, offset), fetch="all")
 
         for linha, dados in enumerate(resultados):
             self.tabela.insertRow(linha)
+            visuais = list(dados)
+            visuais[3] = formatar_cpf(visuais[3])
+            visuais[5] = formatar_celular(visuais[5])
 
-            dados_visuais = list(dados)
-            dados_visuais[3] = formatar_cpf(dados_visuais[3])       # CPF
-            dados_visuais[5] = formatar_celular(dados_visuais[5])   # Celular
-
-            for coluna, valor in enumerate(dados_visuais):
+            for coluna_idx, valor in enumerate(visuais):
                 item = QTableWidgetItem(str(valor))
-                if coluna in (0, 1, 7):  # ID, Data e Estado centralizados
+                if coluna_idx in (0, 1, 7):
                     item.setTextAlignment(Qt.AlignCenter)
-                self.tabela.setItem(linha, coluna, item)
+                self.tabela.setItem(linha, coluna_idx, item)
 
-            btn = QPushButton("Editar")
-            btn.setObjectName("btnEditarTabela")
-            btn.clicked.connect(lambda _, i=dados[0]: self.preparar_edicao(i))
+            btn = self._btn("Editar", objeto="btnEditarTabela",
+                            callback=lambda _, i=dados[0]: self.preparar_edicao(i))
             self.tabela.setCellWidget(linha, 8, btn)
 
         self.tabela.setSortingEnabled(True)
         self.atualizar_contador()
+        self.atualizar_paginacao()
 
     def preparar_edicao(self, id_pessoa):
-        """Prepara o formulário para edição (parte do UPDATE).
-        
-        Usa SELECT * porque precisamos de TODOS os campos para preencher o formulário.
-        Ordem: [0]id [1]nome [2]cpf [3]email [4]celular [5]cep 
-               [6]logradouro [7]numero [8]complemento [9]bairro 
-               [10]cidade [11]estado [12]data_cadastro
-        """
         dados = db_execute("SELECT * FROM pessoas WHERE id=?", (id_pessoa,), "one")
-        if not dados:
-            return
+        if not dados: return
 
         self.id_editando = dados[0]
-        self.input_nome.setText(dados[1])
-        self.input_cpf.setText(dados[2])
-        self.input_email.setText(dados[3])
-        self.input_celular.setText(dados[4])
-        self.input_cep.setText(dados[5])
-        self.input_logradouro.setText(dados[6])
-        self.input_numero.setText(dados[7])
-        self.input_complemento.setText(dados[8])
-        self.input_bairro.setText(dados[9])
-        self.input_cidade.setText(dados[10])
+        for campo, valor in zip(self.campos_texto, dados[1:11]):
+            campo.setText(valor)
         self.combo_estado.setCurrentText(dados[11])
+
         self.status_bar.showMessage(f"Editando registro ID {self.id_editando}...", 3000)
         self.input_nome.setFocus()
 
     def excluir_dados(self):
-        """DELETE - remove o registro selecionado."""
         linha = self.tabela.currentRow()
         if linha == -1:
-            self.mostrar_erro("Selecione um registro na tabela para excluir.")
-            return
+            return self.mostrar_erro("Selecione um registro na tabela para excluir.")
 
         id_pessoa = self.tabela.item(linha, 0).text()
         nome = self.tabela.item(linha, 2).text()
 
         if QMessageBox.question(self, "Confirmar Exclusão",
-                                f"Deseja realmente excluir o cliente '{nome}'?",
-                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                f"Deseja realmente excluir o cliente '{nome}'?",
+                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             db_execute("DELETE FROM pessoas WHERE id=?", (id_pessoa,))
             self.limpar_campos()
             self.carregar_dados()
-
-            # Mensagem de confirmação de exclusão
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Registro Excluído")
-            msg.setIcon(QMessageBox.Information)
-            msg.setTextFormat(Qt.RichText)
-            msg.setText(
-                f"<h3>🗑️ Registro excluído com sucesso!</h3>"
-                f"<p>O cliente <b>{nome}</b> foi removido do sistema.</p>"
-            )
-            msg.exec()
-
+            self._msg("Registro Excluído",
+                      f"<h3>🗑️ Registro excluído com sucesso!</h3>"
+                      f"<p>O cliente <b>{nome}</b> foi removido do sistema.</p>")
             self.status_bar.showMessage("Registro excluído com sucesso!", 5000)
 
-    # ==========================================
-    # FILTRO
-    # ==========================================
-    def filtrar_tabela(self):
-        texto = self.input_pesquisa.text().lower()
-        filtro = self.combo_filtro.currentText()
+    # ---------- PAGINAÇÃO ----------
+    def _total_paginas(self):
+        return max(1, (self.total_registros + POR_PAGINA - 1) // POR_PAGINA)
 
-        colunas = {
-            "Todos": (2, 3, 4, 6),
-            "Nome": (2,),
-            "CPF": (3,),
-            "E-mail": (4,),
-            "Cidade": (6,),
-        }.get(filtro, (2, 3, 4, 6))
+    def atualizar_paginacao(self):
+        total_paginas = self._total_paginas()
+        self.lbl_pagina.setText(f"Página {self.pagina_atual + 1} / {total_paginas}")
+        self.btn_ant.setEnabled(self.pagina_atual > 0)
+        self.btn_prox.setEnabled(self.pagina_atual < total_paginas - 1)
 
-        for linha in range(self.tabela.rowCount()):
-            match = any(
-                self.tabela.item(linha, col) and texto in self.tabela.item(linha, col).text().lower()
-                for col in colunas
-            )
-            self.tabela.setRowHidden(linha, not match)
+    def resetar_e_carregar(self):
+        self.pagina_atual = 0
+        self.carregar_dados()
 
-        self.atualizar_contador()
+    def pagina_anterior(self):
+        if self.pagina_atual > 0:
+            self.pagina_atual -= 1
+            self.carregar_dados()
+
+    def proxima_pagina(self):
+        if self.pagina_atual < self._total_paginas() - 1:
+            self.pagina_atual += 1
+            self.carregar_dados()
+
+    def nova_pagina(self):
+        self.resetar_e_carregar()
 
     def atualizar_contador(self):
-        total = self.tabela.rowCount()
-        visiveis = sum(1 for i in range(total) if not self.tabela.isRowHidden(i))
-        self.lbl_contador.setText(f"Exibindo: {visiveis} / Total: {total}")
+        visiveis = self.tabela.rowCount()
+        self.lbl_contador.setText(
+            f"Exibindo: {visiveis} / Total filtrado: {self.total_registros}")
 
-    # ==========================================
-    # BUSCA DE CEP
-    # ==========================================
+    # ---------- CEP ----------
     def buscar_cep(self):
         cep = limpar_formatacao(self.input_cep.text())
         if len(cep) != 8:
-            self.mostrar_erro("CEP inválido. Digite os 8 números.")
-            return
+            return self.mostrar_erro("CEP inválido. Digite os 8 números.")
 
         self.status_bar.showMessage("Buscando CEP...")
         QApplication.processEvents()
 
         try:
-            dados = requests.get(f"https://viacep.com.br/ws/{cep}/json/", timeout=5).json()
-            if "erro" in dados:
-                self.mostrar_erro("CEP não encontrado.")
-                return
+            d = requests.get(f"https://viacep.com.br/ws/{cep}/json/", timeout=5).json()
+            if "erro" in d:
+                return self.mostrar_erro("CEP não encontrado.")
 
-            # Coleta os dados retornados
-            logradouro = dados.get("logradouro", "")
-            bairro = dados.get("bairro", "")
-            cidade = dados.get("localidade", "")
-            estado = dados.get("uf", "")
+            campos = {"Logradouro": d.get("logradouro", ""),
+                      "Bairro":     d.get("bairro", ""),
+                      "Cidade":     d.get("localidade", ""),
+                      "Estado":     d.get("uf", "")}
 
-            # Preenche os campos
-            self.input_logradouro.setText(logradouro)
-            self.input_bairro.setText(bairro)
-            self.input_cidade.setText(cidade)
-            self.combo_estado.setCurrentText(estado)
+            self.input_logradouro.setText(campos["Logradouro"])
+            self.input_bairro.setText(campos["Bairro"])
+            self.input_cidade.setText(campos["Cidade"])
+            self.combo_estado.setCurrentText(campos["Estado"])
 
-            # Monta a lista de campos preenchidos (só mostra os que vieram com valor)
-            campos_preenchidos = []
-            if logradouro: campos_preenchidos.append(f"<b>Logradouro:</b> {logradouro}")
-            if bairro:     campos_preenchidos.append(f"<b>Bairro:</b> {bairro}")
-            if cidade:     campos_preenchidos.append(f"<b>Cidade:</b> {cidade}")
-            if estado:     campos_preenchidos.append(f"<b>Estado:</b> {estado}")
+            itens = "".join(f"<li><b>{k}:</b> {v}</li>" for k, v in campos.items() if v)
 
-            # Exibe a mensagem de sucesso
-            msg = QMessageBox(self)
-            msg.setWindowTitle("CEP Encontrado")
-            msg.setIcon(QMessageBox.Information)
-            msg.setTextFormat(Qt.RichText)
-            msg.setText(
-                f"<h3>✅ CEP {formatar_cep(cep)} encontrado!</h3>"
-                f"<p>Os seguintes campos foram preenchidos automaticamente:</p>"
-                f"<ul>{''.join(f'<li>{c}</li>' for c in campos_preenchidos)}</ul>"
-                f"<p><i>Confira os dados e complete o número e o complemento.</i></p>"
-            )
-            msg.exec()
+            self._msg("CEP Encontrado",
+                      f"<h3>✅ CEP {formatar_cep(cep)} encontrado!</h3>"
+                      f"<p>Os seguintes campos foram preenchidos automaticamente:</p>"
+                      f"<ul>{itens}</ul>"
+                      f"<p><i>Confira os dados e complete o número e o complemento.</i></p>")
 
             self.status_bar.showMessage("CEP encontrado!", 3000)
             self.input_numero.setFocus()
@@ -611,21 +641,16 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.mostrar_erro(f"Erro inesperado: {e}")
 
-    # ==========================================
-    # EXPORTAÇÃO PDF
-    # ==========================================
+    # ---------- PDF ----------
     def exportar_pdf(self):
-        if self.tabela.rowCount() == 0:
-            self.mostrar_erro("Não há dados para exportar.")
-            return
+        if self.total_registros == 0:
+            return self.mostrar_erro("Não há dados para exportar.")
 
         filename, _ = QFileDialog.getSaveFileName(
             self, "Salvar PDF",
             f"clientes_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-            "Arquivos PDF (*.pdf)"
-        )
-        if not filename:
-            return
+            "Arquivos PDF (*.pdf)")
+        if not filename: return
 
         try:
             doc = SimpleDocTemplate(filename, pagesize=landscape(A4),
@@ -633,69 +658,48 @@ class MainWindow(QMainWindow):
                                     topMargin=1*cm, bottomMargin=1*cm)
             estilos = getSampleStyleSheet()
             titulo_style = ParagraphStyle('TituloCustom', parent=estilos['Title'],
-                                          fontSize=16, textColor=colors.HexColor("#1a1a1a"),
+                                          fontSize=16, textColor=rl_colors.HexColor("#1a1a1a"),
                                           spaceAfter=6)
 
-            cabecalhos = ["ID", "Data", "Nome", "CPF", "E-mail", "Celular", "Cidade", "Estado"]
-            dados_tabela = [cabecalhos]
+            linhas = [["ID", "Data", "Nome", "CPF", "E-mail", "Celular", "Cidade", "Estado"]]
+            linhas += [
+                [self.tabela.item(l, c).text() if self.tabela.item(l, c) else "" for c in range(8)]
+                for l in range(self.tabela.rowCount())
+            ]
 
-            # Adiciona apenas as linhas visíveis (respeita o filtro)
-            for linha in range(self.tabela.rowCount()):
-                if self.tabela.isRowHidden(linha):
-                    continue
-                dados_tabela.append([
-                    self.tabela.item(linha, col).text() if self.tabela.item(linha, col) else ""
-                    for col in range(8)
-                ])
+            tabela = Table(linhas, repeatRows=1)
+            tabela.setStyle(PDF_TABLE_STYLE)
 
-            tabela_pdf = Table(dados_tabela, repeatRows=1)
-            tabela_pdf.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#00bcd4")),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f0f0")]),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('LEFTPADDING', (0, 0), (-1, -1), 4),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-                ('TOPPADDING', (0, 0), (-1, -1), 4),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ]))
-
-            elementos = [
+            doc.build([
                 Paragraph("Relatório de Clientes", titulo_style),
                 Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y às %H:%M')}", estilos['Normal']),
+                Paragraph(f"Registros: {len(linhas) - 1}", estilos['Normal']),
                 Spacer(1, 0.5 * cm),
-                tabela_pdf,
-            ]
-            doc.build(elementos)
+                tabela,
+            ])
+
             self.status_bar.showMessage(f"PDF exportado: {filename}", 5000)
-            QMessageBox.information(self, "Sucesso", f"PDF gerado com sucesso em:\n{filename}")
+            self._msg("Sucesso", f"PDF gerado com sucesso em:<br/>{filename}")
         except Exception as e:
             self.mostrar_erro(f"Erro ao gerar PDF: {e}")
 
-    # ==========================================
-    # MÉTODOS AUXILIARES
-    # ==========================================
+    # ---------- AUXILIARES ----------
     def on_double_click(self, row, column):
-        if column == 8: return
-        self.preparar_edicao(self.tabela.item(row, 0).text())
+        if column != 8:
+            self.preparar_edicao(self.tabela.item(row, 0).text())
 
-    def mostrar_erro(self, mensagem):
-        QMessageBox.critical(self, "Erro", mensagem)
-        self.status_bar.showMessage("Erro: " + mensagem, 5000)
+    def mostrar_erro(self, msg):
+        QMessageBox.critical(self, "Erro", msg)
+        self.status_bar.showMessage("Erro: " + msg, 5000)
+        return False
 
     def limpar_campos(self):
         self.id_editando = None
+        self.limpar_rascunho()
         for campo in self.campos_texto:
             campo.clear()
+            self._set_estado(campo, None)
         self.combo_estado.setCurrentIndex(0)
-        for campo in (self.input_nome, self.input_cpf, self.input_email):
-            campo.setStyleSheet("")
         self.status_bar.showMessage("Campos limpos.")
         self.input_nome.setFocus()
 
@@ -705,16 +709,13 @@ class MainWindow(QMainWindow):
         self.aplicar_estilos()
 
     def aplicar_estilos(self):
-        self.setStyleSheet(montar_qss(CORES[self.tema_atual]))
+        self.setStyleSheet(QSS_TEMPLATE.format(**CORES[self.tema_atual]))
 
-# ==========================================
-# PONTO DE ENTRADA
-# ==========================================
+
 if __name__ == "__main__":
     init_db()
     app = QApplication(sys.argv)
-    app.setOrganizationName("MinhaEmpresa")
-    app.setApplicationName("CadastroApp")
-    window = MainWindow()
-    window.show()
+    app.setOrganizationName(EMPRESA)
+    app.setApplicationName(APP)
+    MainWindow().show()
     sys.exit(app.exec())
